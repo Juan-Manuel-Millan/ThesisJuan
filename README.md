@@ -1,16 +1,16 @@
 # ThesisJuan
-Repositorio de los ficheros de simulación para la Tesis
+Repository of simulation files for the Thesis
 
-A fecha 10/12 los ficheros usados son:
+As of 10/12, the files used are:
 
-observar_graficos:lee el archivo .csv donde guardo los datos de la simulación y muestra el MSE de las estimaciones para diferentes valores de beta y de proporción de outliers
+observar_graficos: Reads the .csv file where I store the simulation data and displays the MSE of the estimates for different values of beta and outlier proportions.
 
-experimento_vectorizacion_outliers: fichero donde se establecen los parametros para los experimentos y lo guardo en el archivo .csv
+experimento_vectorizacion_outliers: File where the parameters for the experiments are set and saved in a .csv file.
 
-simulacion_outliers: fichero donde se genera una simulación con algún tipo de outlier para observar la distribución graficamente.
+simulacion_outliers: File where a simulation with some type of outlier is generated to observe the distribution graphically.
 
-estimacion: fihcero donde están guardadas las funciones de estimación mediante DPD y MLE
+estimacion: File where the estimation functions using DPD and MLE are stored.
 
-derivadas: fichero donde guardo funciones que calculan la derivada y el hessiano del problema de minimización de la DPD emírica.
+derivadas: File where functions that calculate the derivative and the Hessian of the minimization problem for the empirical DPD are stored.
 
-simulacion: fichero donde genero simulaciones con outliers y la exponencial mixta.
+simulacion: File where simulations with outliers and the mixed exponential are generated.
