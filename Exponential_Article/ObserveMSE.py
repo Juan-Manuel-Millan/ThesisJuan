@@ -1,172 +1,165 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import os
+# ==========================================
+# 1. CARGA DE DATOS Y PARÁMETROS REALES
+# ==========================================
+# Cargar el archivo único generado por la simulación Exponencial
+output_dir = r"C:/Users/milla/OneDrive/Documentos/Doctorado/Primer Artículo/Programación"
+filename = 'Results_RMDPDE_Exponential_RightUniformNoiseBIS.xlsx'
+ruta_completa = os.path.join(output_dir, filename)
+datos = pd.read_excel(ruta_completa)
 
-# Load the data
-datos_a0 = pd.read_csv('datosMSEa012.csv')
-datos_a1 = pd.read_csv('datosMSEa112.csv')
+# Redondear para evitar problemas de filtrado por coma flotante
+datos['Beta'] = np.round(datos['Beta'], 2)
+datos['Proportion'] = np.round(datos['Proportion'], 3)
 
-# Parameters
-betas = np.arange(0, 1.2, 0.2)
-proporciones = np.array([0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]) / 10
-# Create new DataFrames to store the filtered data
-x0 = 0
-time = 15
-# Dictionaries to store results
+# Extraer Betas y proporciones automáticamente del archivo
+betas = sorted(datos['Beta'].unique())
+proporciones = sorted(datos['Proportion'].unique())
+
+# Parámetros reales usados en la simulación
+a0_real = 6
+a1_real = -0.5
+
+# Niveles de estrés (x0 = Condiciones normales de uso, x1 = Test 1, x2 = Test 2)
+x0 = 1
+x1 = 4
+x2 = 6
+time = np.round(np.exp(a0_real - a1_real * x0), 2)  # Tiempo t0 para evaluar la fiabilidad (Reliability)
+
+# ==========================================
+# 2. INICIALIZACIÓN DE DICCIONARIOS
+# ==========================================
 mse_a0 = {beta: [] for beta in betas}
 mse_a1 = {beta: [] for beta in betas}
 mse_mean0 = {beta: [] for beta in betas}
 mse_mean1 = {beta: [] for beta in betas}
 mse_mean2 = {beta: [] for beta in betas}
 mse_median = {beta: [] for beta in betas}
-mse_survive = {beta: [] for beta in betas}
 mse_reability = {beta: [] for beta in betas}
 
-
-# Helper functions
+# ==========================================
+# 3. FUNCIONES AUXILIARES DE ERROR (EXPONENCIAL)
+# ==========================================
 def calculate_mse(estimates, real_value):
     error = estimates - real_value
     return np.mean(error**2)
 
-
-def calculate_mse_mean_time(estimates_a0, estimates_a1, stress, real_value):
-    lambda_est = np.exp(estimates_a0['a0_estimator'].values + estimates_a1['a1_estimator'].values * stress)
+def calculate_mse_mean_time(est_a0, est_a1, stress, real_value):
+    # En la exponencial: MTTF = lambda
+    lambda_est = np.exp(est_a0 + est_a1 * stress)
     error = lambda_est - real_value
     return np.mean(error**2)
 
-
-def calculate_mse_median(estimates_a0, estimates_a1, lambda_0_real, stress):
-    lambda0_est = np.exp(estimates_a0['a0_estimator'].values + estimates_a1['a1_estimator'].values * stress)
-    error = -np.log(0.5) * (lambda0_est - lambda_0_real)
+def calculate_mse_median(est_a0, est_a1, lambda_real, stress):
+    # Mediana Exponencial: t_50 = lambda * ln(2)
+    lambda_est = np.exp(est_a0 + est_a1 * stress)
+    error = np.log(0.5) * (lambda_est - lambda_real)
     return np.mean(error**2)
 
-
-def calculate_mse_survive(estimates_a0, estimates_a1, lambda_0_real, alpha, stress):
-    lambda0_est = np.exp(estimates_a0['a0_estimator'].values + estimates_a1['a1_estimator'].values * stress)
-    error = -np.log(1 - alpha) * (lambda0_est - lambda_0_real)
-    return np.mean(error**2)
-
-
-def calculate_mse_reability_time(estimates_a0, estimates_a1, lambda_0_real, time, stress):
-    lambda0_est = np.exp(estimates_a0['a0_estimator'].values + estimates_a1['a1_estimator'].values * stress)
-    reability_real = np.exp(time / lambda_0_real)
-    reability_est = np.exp(time / lambda0_est)
+def calculate_mse_reliability_time(est_a0, est_a1, lambda_real, t, stress):
+    # Fiabilidad Exponencial: R(t) = exp(-t / lambda) -> ¡Corregido el signo negativo!
+    lambda_est = np.exp(est_a0 + est_a1 * stress)
+    reability_real = np.exp(-t / lambda_real)
+    reability_est = np.exp(-t / lambda_est)
     error = reability_real - reability_est
     return np.mean(error**2)
 
+# ==========================================
+# 4. BUCLE PRINCIPAL (CÁLCULO DE MSE)
+# ==========================================
+# Lambdas reales
+real_lambda_0 = np.exp(a0_real + a1_real * x0)
+real_lambda_1 = np.exp(a0_real + a1_real * x1)
+real_lambda_2 = np.exp(a0_real + a1_real * x2)
 
-# Main loop
-real_lambda_0 = np.exp(3.5 - 1 * x0)
 for beta in betas:
     for prop in proporciones:
-        # Filter data
-        subset_a0 = datos_a0[(datos_a0['Beta'] == beta) & (datos_a0['Proporción'] == prop)]
-        subset_a1 = datos_a1[(datos_a1['Beta'] == beta) & (datos_a1['Proporción'] == prop)]
+        # Filtrar datos de la tabla única
+        subset = datos[(datos['Beta'] == beta) & (datos['Proportion'] == prop)]
+        
+        # Extraer arrays numéricos limpios
+        est_a0 = subset['a0_estimator'].values
+        est_a1 = subset['a1_estimator'].values
 
-        # MSE a0 and a1
-        mse_a0_sample = calculate_mse(subset_a0['a0_estimator'].values, 3.5)
-        mse_a1_sample = calculate_mse(subset_a1['a1_estimator'].values, -1)
-        mse_a0[beta].append(mse_a0_sample)
-        mse_a1[beta].append(mse_a1_sample)
+        # MSE Parámetros a0 y a1
+        mse_a0[beta].append(calculate_mse(est_a0, a0_real))
+        mse_a1[beta].append(calculate_mse(est_a1, a1_real))
 
-        # MSE Mean Time (lambdas)
-        real_lambda_1 = np.exp(3.5 + (-1) * 1)
-        real_lambda_2 = np.exp(3.5 + (-1) * 2)
-        mse_mean0_sample = calculate_mse_mean_time(subset_a0, subset_a1, 0, real_lambda_0)
-        mse_mean1_sample = calculate_mse_mean_time(subset_a0, subset_a1, 1, real_lambda_1)
-        mse_mean2_sample = calculate_mse_mean_time(subset_a0, subset_a1, 2, real_lambda_2)
-        mse_mean0[beta].append(mse_mean0_sample)
-        mse_mean1[beta].append(mse_mean1_sample)
-        mse_mean2[beta].append(mse_mean2_sample)
+        # MSE Tiempo Medio (MTTF = Lambdas)
+        mse_mean0[beta].append(calculate_mse_mean_time(est_a0, est_a1, x0, real_lambda_0))
+        mse_mean1[beta].append(calculate_mse_mean_time(est_a0, est_a1, x1, real_lambda_1))
+        mse_mean2[beta].append(calculate_mse_mean_time(est_a0, est_a1, x2, real_lambda_2))
 
-        # MSE Median
-        mse_median1 = calculate_mse_median(subset_a0, subset_a1, real_lambda_0, x0)
-        mse_median[beta].append(mse_median1)
-        # MSE Median
+        # MSE Mediana (estimada en x0)
+        mse_median[beta].append(calculate_mse_median(est_a0, est_a1, real_lambda_0, x0))
 
-        mse_reab = calculate_mse_reability_time(subset_a0, subset_a1, real_lambda_0, time, x0)
+        # MSE Fiabilidad (estimada en x0, para 'time'=15)
+        mse_reab = calculate_mse_reliability_time(est_a0, est_a1, real_lambda_0, time, x0)
         mse_reability[beta].append(mse_reab)
-        # MSE Survival
-# === GRAPH 1: MSE for a0 and a1 ===
+
+
+# ==========================================
+# 5. VISUALIZACIÓN GRÁFICA
+# ==========================================
+
+# Convertir proporciones a porcentaje para el Eje X
+prop_porcentaje = np.array(proporciones) * 100
+
+# === GRÁFICA 1: MSE para a0 y a1 ===
 fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 for beta in betas:
-    ax1.plot(proporciones, mse_a0[beta], label=f'Beta {np.round(beta, 2)}')
-    ax2.plot(proporciones, mse_a1[beta], label=f'Beta {np.round(beta, 2)}')
+    ax1.plot(prop_porcentaje, mse_a0[beta], marker='o', label=f'Beta {beta:.2f}')
+    ax2.plot(prop_porcentaje, mse_a1[beta], marker='s', label=f'Beta {beta:.2f}')
 ax1.set_title('MSE for $a_0$')
 ax2.set_title('MSE for $a_1$')
 for ax in (ax1, ax2):
-    ax.set_xlabel('Proportion')
+    ax.set_xlabel('Proportion of Outliers (%)')
     ax.set_ylabel('MSE')
-    ax.grid(True)
+    ax.grid(True, linestyle='--', alpha=0.7)
     ax.legend()
 plt.tight_layout()
 plt.show()
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-
-# Stress = 1 (λ₁)
+# === GRÁFICA 2: MSE para MTTF en Estrés 1 y 2 ===
+fig2, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 for beta in betas:
-    ax1.plot(proporciones, mse_mean1[beta], label=f'Beta {np.round(beta, 2)}')
-ax1.set_title('MSE for Mean Time, Stress = 1 (λ₁)')
-ax1.set_xlabel('Proportion')
-ax1.set_ylabel('MSE')
-ax1.grid(True)
-ax1.legend()
-
-# Stress = 2 (λ₂)
-for beta in betas:
-    ax2.plot(proporciones, mse_mean2[beta], label=f'Beta {np.round(beta, 2)}')
-ax2.set_title('MSE for Mean Time, Stress = 2 (λ₂)')
-ax2.set_xlabel('Proportion')
-ax2.set_ylabel('MSE')
-ax2.grid(True)
-ax2.legend()
-
+    ax1.plot(prop_porcentaje, mse_mean0[beta], marker='o', label=f'Beta {beta:.2f}')
+    ax2.plot(prop_porcentaje, mse_mean1[beta], marker='s', label=f'Beta {beta:.2f}')
+ax1.set_title(f'MSE for Mean Time, Stress = {x1} (λ0)')
+ax2.set_title(f'MSE for Mean Time, Stress = {x2} (λ1)')
+for ax in (ax1, ax2):
+    ax.set_xlabel('Proportion of Outliers (%)')
+    ax.set_ylabel('MSE')
+    ax.grid(True, linestyle='--', alpha=0.7)
+    ax.legend()
 plt.tight_layout()
 plt.show()
 
-# === GRAPH 3: MSE for Median ===
-plt.figure(figsize=(8, 6))
-for beta in betas:
-    plt.plot(proporciones, mse_median[beta], label=f'Beta {np.round(beta, 2)}')
-plt.title('MSE for Median Lifetime')
-plt.xlabel('Proportion')
-plt.ylabel('MSE')
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
-plt.show()
+# === GRÁFICA 3: COMPOSICIÓN (MTTF, Reliability, Median) ===
+fig3, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6), constrained_layout=True)
 
-fig1, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6), constrained_layout=True)
-
-# MMTF
+# (a) MTTF en uso normal (x0 = 0)
 for beta in betas:
-    ax1.plot(proporciones, mse_mean0[beta], label=f'Beta {np.round(beta, 2)}')
-ax1.set_xlabel('Proportion', fontsize=12)
-ax1.set_ylabel('MSE', fontsize=12)
-ax1.grid(True)
-ax1.legend(fontsize=10)
-ax1.text(0.5, -0.2, '(a) MTTF', transform=ax1.transAxes,
-         ha='center', va='top', fontsize=12)
+    ax1.plot(prop_porcentaje, mse_mean0[beta], marker='o', label=f'Beta {beta:.2f}')
+ax1.set_title('(a) MTTF at Baseline', fontsize=12)
 
-# Reliability at t0 = 15
+# (b) Reliability at t0
 for beta in betas:
-    ax2.plot(proporciones, mse_reability[beta], label=f'Beta {np.round(beta, 2)}')
-ax2.set_xlabel('Proportion', fontsize=12)
-ax2.set_ylabel('MSE', fontsize=12)
-ax2.grid(True)
-ax2.legend(fontsize=10)
-ax2.text(0.5, -0.2, '(b) Reliability at $t_0$ = 15', transform=ax2.transAxes,
-         ha='center', va='top', fontsize=12)
+    ax2.plot(prop_porcentaje, mse_reability[beta], marker='s', label=f'Beta {beta:.2f}')
+ax2.set_title(f'(b) Reliability at $t_0$ = {time}', fontsize=12)
 
-# Median
+# (c) Median Lifetime at Baseline
 for beta in betas:
-    ax3.plot(proporciones, mse_median[beta], label=f'Beta {np.round(beta, 2)}')
-ax3.set_xlabel('Proportion', fontsize=12)
-ax3.set_ylabel('MSE', fontsize=12)
-ax3.grid(True)
-ax3.legend(fontsize=10)
-ax3.text(0.5, -0.2, '(c) Median', transform=ax3.transAxes,
-         ha='center', va='top', fontsize=12)
+    ax3.plot(prop_porcentaje, mse_median[beta], marker='^', label=f'Beta {beta:.2f}')
+ax3.set_title('(c) Median Lifetime at Baseline', fontsize=12)
+
+for ax in (ax1, ax2, ax3):
+    ax.set_xlabel('Proportion of Outliers (%)', fontsize=12)
+    ax.set_ylabel('MSE', fontsize=12)
+    ax.grid(True, linestyle='--', alpha=0.7)
+    ax.legend(fontsize=10)
 
 plt.show()

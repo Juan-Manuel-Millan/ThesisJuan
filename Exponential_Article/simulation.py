@@ -1,154 +1,143 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import pandas as pd
-import math
 
-# Function to generate the corrected simulation
-def simulate_mixture_exponential(tau1, tau2, lambda1, lambda2, num_simulations):
-    times = []
-
-    # Calculate the cumulative probabilities for each segment
-    p1 = 1 - np.exp(-1 / lambda1 * tau1)  # Probability for the interval (0, tau1)
-    p2 = np.exp(-1 / lambda1 * tau1) - np.exp(
-        -1 / lambda1 * tau1 + 1 / lambda2 * tau1 - 1 / lambda2 * tau2
-    )  # (tau1, tau2)
-    p3 = np.exp(
-        -1 / lambda2 * tau2 - 1 / lambda1 * tau1 + 1 / lambda2 * tau1
-    )  # Point t = tau2
-
-    # Simulate normals
-    for _ in range(num_simulations):
-        u = np.random.uniform(0, 1)
-        if u <= p1:
-            t = -lambda1 * np.log(1 - u)
-        elif u <= (p1 + p2):
-            t = -lambda2 * np.log(
-                -(u - p1) / np.exp(-1 / lambda1 * tau1 + 1 / lambda2 * tau1)
-                + np.exp(-1 / lambda2 * tau1)
-            )
-        else:
-            t = tau2
-        times.append(t)
-
-    simulations = np.array(times)
-    table = pd.DataFrame({"type": "normal", "value": times})
-    return SimulationResult(simulations, table)
-
-
-class SimulationResult:
-    def __init__(self, simulations, table):
-        self.simulations = simulations
-        self.table = table
-
-
-def simulate_mixture_exponential_tau2_outlier(
-    tau1,
-    tau2,
-    lambda1,
-    lambda2,
-    num_simulations,
-    proportion_outliers,
-    lambda_outlier,
-    tau_outlier,
+def simulate_piecewise_exponential_with_outliers(
+    lambda1, lambda2, num_simulations,
+    tau1, tau2,
+    outlier_intervals=None,   # Lista de tuplas: [(a,b), (c,d)]
+    outlier_proportion=0.01,
+    random_seed=None,
+    plot_hist=False,
+    bins=50
 ):
-    times = []
-    labels = []
+    """
+    Simula un modelo SSALT Exponencial de 2 tramos (Piecewise) con censura Tipo-I en tau2,
+    inyectando outliers bajo una distribución Uniforme en múltiples intervalos posibles.
+    """
+    if random_seed is not None:
+        np.random.seed(random_seed)
 
-    # Calculate the cumulative probabilities for each segment
-    p1 = 1 - np.exp(-1 / lambda1 * tau1)  # Probability for the interval (0, tau1)
-    p2 = np.exp(-1 / lambda1 * tau1) - np.exp(
-        -1 / lambda1 * tau1 + 1 / lambda2 * tau1 - 1 / lambda2 * tau2
-    )  # (tau1, tau2)
-    p3 = np.exp(
-        -1 / lambda2 * tau2 - 1 / lambda1 * tau1 + 1 / lambda2 * tau1
-    )  # Point t = tau2
+    # ======================================================
+    # 1. CONTINUIDAD MATEMÁTICA (Cumulative Exposure Model)
+    # ======================================================
+    # A es la constante de desplazamiento temporal: s1 - tau1
+    A = (lambda2 / lambda1) * tau1 - tau1
 
-    # Fixed number of normals and outliers
-    num_outliers = math.ceil(num_simulations * proportion_outliers)
-    num_normals = num_simulations - num_outliers
-    if proportion_outliers > 0:
-        # Simulate normals
-        for _ in range(num_normals):
-            u = np.random.uniform(0, 1)
-            if u <= p1:
-                t = -lambda1 * np.log(1 - u)
-            elif u <= (p1 + p2):
-                t = -lambda2 * np.log(
-                    -(u - p1) / np.exp(-1 / lambda1 * tau1 + 1 / lambda2 * tau1)
-                    + np.exp(-1 / lambda2 * tau1)
-                )
-            else:
-                t = tau2
-            times.append(t)
-            labels.append("normal")
+    # ======================================================
+    # 2. TAMAÑOS DE MUESTRA
+    # ======================================================
+    num_outliers = int(outlier_proportion * num_simulations)
+    num_normal = num_simulations - num_outliers
 
-        # Simulate outliers
-        for _ in range(num_outliers):
-            u = np.random.uniform(0, 1)
-            t = -lambda_outlier * np.log(1 - u) + tau_outlier
-            if t > tau2:
-                t = tau2
-            times.append(t)
-            labels.append("outlier")
+    # ======================================================
+    # 3. DATOS NORMALES (EXPONENCIAL PIECEWISE)
+    # ======================================================
+    u = np.random.rand(num_normal)
+    
+    # Probabilidades acumuladas teóricas en los puntos de corte (sin eta)
+    F1_tau1 = 1 - np.exp(-(tau1 / lambda1))
+    F2_tau2 = 1 - np.exp(-((tau2 + A) / lambda2))
+
+    T_normal = np.empty(num_normal)
+
+    # Tramo 1: Fallos antes de tau1
+    mask1 = u < F1_tau1
+    T_normal[mask1] = lambda1 * (-np.log(1 - u[mask1]))
+
+    # Tramo 2: Fallos entre tau1 y tau2
+    mask2 = (u >= F1_tau1) & (u < F2_tau2)
+    if np.any(mask2):
+        T_normal[mask2] = lambda2 * (-np.log(1 - u[mask2])) - A
+
+    # Censura natural: Superviven a tau2
+    mask3 = u >= F2_tau2
+    T_normal[mask3] = tau2
+
+    # ======================================================
+    # 4. OUTLIERS (UNIFORMES EN INTERVALOS) VECTORIZADOS
+    # ======================================================
+    if num_outliers > 0 and outlier_intervals is not None:
+        intervals = np.array(outlier_intervals)
+        lengths = intervals[:, 1] - intervals[:, 0]
+
+        # Probabilidad proporcional a la longitud de cada intervalo
+        probs = lengths / lengths.sum()
+
+        # Elegir de golpe a qué intervalo va cada outlier
+        chosen_idx = np.random.choice(len(intervals), size=num_outliers, p=probs)
+        
+        # Extraer los límites a y b para cada outlier seleccionado
+        a_chosen = intervals[chosen_idx, 0]
+        b_chosen = intervals[chosen_idx, 1]
+
+        # Generar las uniformes vectorizadas
+        T_outliers = np.random.uniform(a_chosen, b_chosen)
     else:
-        sample = simulate_mixture_exponential(
-            tau1, tau2, lambda1, lambda2, num_simulations
+        T_outliers = np.array([])
+
+    # ======================================================
+    # 5. MEZCLAR, CENSURAR Y DESORDENAR
+    # ======================================================
+    T_all = np.concatenate([T_normal, T_outliers])
+
+    is_outlier = np.concatenate([
+        np.zeros(num_normal, dtype=bool),
+        np.ones(num_outliers, dtype=bool)
+    ])
+
+    # Aplicar la censura estricta en el tiempo tau2
+    observed = np.minimum(T_all, tau2)
+    events = T_all < tau2  # Estrictamente menor
+
+    # Mezclar el array para que los outliers no queden al final
+    indices = np.random.permutation(len(T_all))
+    observed = observed[indices]
+    events = events[indices]
+    is_outlier = is_outlier[indices]
+
+    # ======================================================
+    # 6. PLOT OPCIONAL
+    # ======================================================
+    if plot_hist:
+        plt.figure(figsize=(10, 6))
+        plt.hist(
+            [observed[~is_outlier], observed[is_outlier]],
+            bins=bins,
+            color=["skyblue", "orange"],
+            edgecolor="black",
+            alpha=0.8,
+            label=["Sanos", "Ruido Uniforme"],
+            stacked=True
         )
-        times = sample.table["value"]
-        labels = sample.table["type"]
-    # Mix so that not all outliers are at the end
-    combined = list(zip(times, labels))
-    np.random.shuffle(combined)
-    times, labels = zip(*combined)
 
-    simulations = np.array(times)
-    table = pd.DataFrame({"type": labels, "value": simulations})
+        plt.axvline(tau1, color='blue', linestyle='--', label=f'$\\tau_1$ ({tau1})')
+        plt.axvline(tau2, color='red', linestyle='--', label=f'$\\tau_2$ (Censura: {tau2})')
 
-    return SimulationResult(simulations, table)
+        plt.legend()
+        plt.title(f"Histograma: Piecewise Exponencial con {outlier_proportion*100}% Ruido Uniforme")
+        plt.xlabel("Tiempo observado")
+        plt.ylabel("Frecuencia")
+        plt.tight_layout()
+        plt.show()
 
+    return observed, events, is_outlier
 
-def simulate_mixture_exponential_with_outliers_all_survive(
-    tau1, tau2, lambda1, lambda2, num_simulations, proportion_outliers
-):
-    times = []
-    labels = []
-    num_outliers = int(np.floor(num_simulations * proportion_outliers))
-    num_normal = int(num_simulations - num_outliers)
-    # Calculate the cumulative probabilities for each segment
-    p1 = 1 - np.exp(-1 / lambda1 * tau1)  # Probability for the interval (0, tau1)
-    p2 = np.exp(-1 / lambda1 * tau1) - np.exp(
-        -1 / lambda1 * tau1 + 1 / lambda2 * tau1 - 1 / lambda2 * tau2
-    )  # Probability for the interval (tau1, tau2)
-    p3 = np.exp(
-        -1 / lambda2 * tau2 - 1 / lambda1 * tau1 + 1 / lambda2 * tau1
-    )  # Probability for the point t = tau2
+# ======================================================
+# EJEMPLO DE USO:
+# ======================================================
+if __name__ == "__main__":
+    params = {
+        # 'eta' eliminado completamente
+        "lambda1": np.exp(2.1 - 1*0.5),
+        "lambda2": np.exp(2.1 - 1*1),
+        "num_simulations": 1000,
+        "tau1": 3.5,
+        "tau2": 6.0,
+        
+        "outlier_intervals": [(0, 1.45), (5.5, 5.99)], 
+        "outlier_proportion": 0.05,
+        "random_seed": 42,
+        "plot_hist": True
+    }
 
-    for _ in range(num_normal):
-        u = np.random.uniform(0, 1)  # Generate uniform value between 0 and 1
-        if u <= p1:  # Interval (0, tau1)
-            t = -lambda1 * np.log(1 - u)
-        elif u <= (p1 + p2):  # Interval (tau1, tau2)
-            t = -lambda2 * np.log(
-                -(u - p1) / np.exp(-1 / lambda1 * tau1 + 1 / lambda2 * tau1)
-                + np.exp(-1 / lambda2 * tau1)
-            )
-        else:  # Point t = tau2
-            t = tau2
-        labels.append("normal")
-
-        times.append(t)
-    for _ in range(num_outliers):
-        times.append(tau2)
-        labels.append("outlier")
-
-    # Create a DataFrame with the results
-    simulations = np.array(times)
-    table = pd.DataFrame({"type": labels, "value": times})
-    # Mix the indices
-    mixed_indices = np.random.permutation(len(simulations))
-
-    # Apply the mix to the array and the DataFrame
-    mixed_simulations = simulations[mixed_indices]
-    mixed_table = table.iloc[mixed_indices].reset_index(drop=True)
-    # Return the SimulationResult object
-    return SimulationResult(mixed_simulations, mixed_table)
+    obs, ev, is_out = simulate_piecewise_exponential_with_outliers(**params)
